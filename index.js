@@ -5,14 +5,20 @@ import axios from 'axios';
 import multer from 'multer';
 import fs from 'fs';
 import pdf from 'pdf-parse';
+
+// उपयोगकर्ता का सुझाव: ES Modules में path को सही ढंग से हैंडल करने के लिए
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // कॉन्फ़िगरेशन
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-// CORS: सिर्फ आपकी GitHub Pages की वेबसाइट को अनुमति दें
+// उपयोगकर्ता का सुझाव: CORS को और सुरक्षित बनाना
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(',')
   .map(s => s.trim())
@@ -20,57 +26,65 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
 
 app.use(cors({
   origin: function (origin, callback) {
-    // अगर कोई ऑरिजिन नहीं है (जैसे Postman) या ऑरिजिन हमारी लिस्ट में है, तो अनुमति दें
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`CORS policy does not allow access from the specified Origin: ${origin}`));
     }
   }
 }));
 
-// Multer सेटअप: फाइलों को अस्थायी रूप से सेव करने के लिए
-const upload = multer({ dest: 'uploads/' });
+// उपयोगकर्ता का सुझाव: फाइल साइज़ लिमिट जोड़ना
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB की लिमिट
+});
 
 // हेल्थ चेक एंडपॉइंट
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Backend is live and healthy!' });
+  res.json({ status: 'ok', message: 'Backend is live!' });
 });
 
-// फाइल के कंटेंट को पढ़ने के लिए हेल्पर फंक्शन
+// उपयोगकर्ता का सुझाव: सिंक्रोनस की जगह एसिंक्रोनस फाइल रीडिंग
 const readFileContent = async (file) => {
   const filePath = file.path;
   const mimeType = file.mimetype;
 
-  if (mimeType === 'application/pdf') {
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdf(dataBuffer);
-    return data.text;
-  } else if (mimeType.startsWith('text/') || mimeType === 'application/javascript' || mimeType === 'application/json') {
-    return fs.readFileSync(filePath, 'utf-8');
-  } else {
-    return 'Unsupported file type. Could not read content.';
+  try {
+    if (mimeType === 'application/pdf') {
+      const dataBuffer = await fs.promises.readFile(filePath); // Async fix
+      const data = await pdf(dataBuffer);
+      return data.text;
+    } else if (mimeType.startsWith('text/') || ['application/javascript', 'application/json', 'text/markdown'].includes(mimeType)) {
+      return await fs.promises.readFile(filePath, 'utf-8');
+    } else {
+      console.warn(`Unsupported file type: ${mimeType}`);
+      return `[Unsupported File Type: ${mimeType}]`;
+    }
+  } catch (error) {
+    console.error(`Error reading file ${filePath}:`, error);
+    return '[Error reading file content]';
   }
 };
 
 // AI चैट का मुख्य एंडपॉइंट
 app.post('/api/chat', upload.single('file'), async (req, res) => {
-  let fileContent = '';
-  const userPrompt = req.body.prompt;
+  const { prompt } = req.body;
   const file = req.file;
 
   try {
-    if (!userPrompt) {
+    if (!prompt) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
+    let fileContent = '';
     if (file) {
       fileContent = await readFileContent(file);
     }
 
-    let finalPrompt = userPrompt;
+    let finalPrompt = prompt;
     if (fileContent) {
-      finalPrompt = `Based on the following file content:\n\n---\n${fileContent}\n---\n\nAnswer this question: "${userPrompt}"`;
+      finalPrompt = `Based on the following file content:\n\n---START OF FILE---\n${fileContent}\n---END OF FILE---\n\nNow, answer this question: "${prompt}"`;
     }
 
     const response = await axios.post(
@@ -82,7 +96,6 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
       {
         headers: {
           'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
         },
       }
     );
@@ -90,12 +103,14 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
     res.json({ reply: response.data.choices[0].message.content });
 
   } catch (error) {
-    console.error('API Error:', error.response ? error.response.data : error.message);
-    res.status(500).json({ error: 'Failed to get response from AI' });
+    // उपयोगकर्ता का सुझाव: बेहतर एरर हैंडलिंग
+    const errorMessage = error.response?.data?.error?.message || error.message;
+    console.error('API Error:', errorMessage);
+    res.status(500).json({ error: `AI service failed: ${errorMessage}` });
   } finally {
-    // अस्थायी फाइल को डिलीट कर दें
-    if (file) {
-      fs.unlinkSync(file.path);
+    // उपयोगकर्ता का सुझाव: फाइल डिलीट करने से पहले सुरक्षा जांच
+    if (file && fs.existsSync(file.path)) {
+      await fs.promises.unlink(file.path);
     }
   }
 });
