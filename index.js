@@ -6,7 +6,6 @@ import fs from 'fs';
 import pdf from 'pdf-parse';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fetch from 'node-fetch';
 
 // 1. बेसिक कॉन्फ़िगरेशन
 dotenv.config();
