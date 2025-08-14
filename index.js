@@ -2,9 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
-import pdf from 'pdf-parse';
-import path from 'path';
 import { fileURLToPath } from 'url';
+import * as pdfjs from 'pdfjs-dist';
 
 // कॉन्फ़िगरेशन
 dotenv.config();
@@ -20,13 +19,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
-if (allowedOrigins.length === 0) {
-  console.warn("WARNING: ALLOWED_ORIGINS is not set. Allowing all origins for development.");
-}
-
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('CORS नियमों द्वारा अनुमति नहीं है'));
@@ -41,14 +36,32 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB सीमा
 });
 
+// PDF पार्सिंग फंक्शन अपडेट करें
+const extractPDFText = async (buffer) => {
+  try {
+    const pdfDoc = await pdfjs.getDocument({ data: buffer }).promise;
+    let text = '';
+    
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      text += textContent.items.map(item => item.str).join(' ') + '\n';
+    }
+    
+    return text;
+  } catch (error) {
+    console.error('PDF पढ़ने में त्रुटि:', error);
+    return '[System: PDF पार्स करने में समस्या हुई]';
+  }
+};
+
 // फाइल कंटेंट पढ़ने का फंक्शन
 const readFileContent = async (file) => {
   if (!file || !file.buffer) return '';
 
   try {
     if (file.mimetype === 'application/pdf') {
-      const data = await pdf(file.buffer);
-      return data.text;
+      return await extractPDFText(file.buffer);
     } else if (
       file.mimetype.startsWith('text/') || 
       file.mimetype === 'application/json' ||
