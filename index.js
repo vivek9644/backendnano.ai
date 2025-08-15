@@ -106,7 +106,7 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
   }
 
   // Check for API key (fail-safe)
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({ error: 'AI API key not configured' });
   }
 
@@ -123,7 +123,7 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
     const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${process.env.GEMINI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
