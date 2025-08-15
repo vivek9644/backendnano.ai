@@ -8,6 +8,11 @@ import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { Readable } from 'stream';
 
+const pdfParse = async (buffer) => {
+    const { default: pdf } = await import('pdf-parse/lib/pdf-parse.js');
+    return pdf(buffer);
+};
+
 dotenv.config();
 
 const app = express();
