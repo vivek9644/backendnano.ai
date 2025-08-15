@@ -14,11 +14,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
+// -- CORS Allowed Origins --
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 
+// -- CORS Strictness for Production --
+if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+  throw new Error("Production में ALLOWED_ORIGINS सेट करना अनिवार्य है!");
+}
 if (allowedOrigins.length === 0) {
   console.warn("WARNING: ALLOWED_ORIGINS is not set. Allowing all origins for development.");
 }
@@ -33,12 +38,14 @@ app.use(cors({
   }
 }));
 
+// -- Multer File Upload Settings (10MB limit) --
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
+// -- PDF Text Extraction --
 const extractPDFText = async (buffer) => {
   try {
     const pdfDoc = await pdfjs.getDocument({ data: buffer }).promise;
@@ -55,9 +62,13 @@ const extractPDFText = async (buffer) => {
   }
 };
 
+// -- File Content Reader --
 const readFileContent = async (file) => {
   if (!file || !file.buffer) return '';
   try {
+    // Extension-based type check (optional, for extra safety)
+    // const ext = path.extname(file.originalname).toLowerCase();
+
     if (file.mimetype === 'application/pdf') {
       return await extractPDFText(file.buffer);
     } else if (
@@ -75,21 +86,28 @@ const readFileContent = async (file) => {
   }
 };
 
+// -- Health Endpoint --
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'स्वस्थ',
     message: 'बैकएंड कार्यरत है!',
     timestamp: new Date().toISOString(),
-    version: '1.0.1'
+    version: process.env.BACKEND_VERSION || '1.0.1'
   });
 });
 
+// -- Main Chat Endpoint with File Upload --
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   const { prompt } = req.body;
   const file = req.file;
 
   if (!prompt) {
     return res.status(400).json({ error: 'प्रॉम्प्ट आवश्यक है' });
+  }
+
+  // Check for API key (fail-safe)
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'AI API key not configured' });
   }
 
   try {
@@ -130,11 +148,7 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
     });
     aiResponse.body.on('error', (err) => {
       console.error('AI stream error:', err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'AI stream error' });
-      } else {
-        res.end();
-      }
+      res.end(); // सिर्फ end करें, headersSent error से बचने के लिए
     });
 
   } catch (error) {
@@ -147,11 +161,13 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
   }
 });
 
+// -- Start Server --
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`सर्वर पोर्ट ${PORT} पर चल रहा है (0.0.0.0)`);
   console.log(`अनुमत मूल स्रोत: ${allowedOrigins.join(', ') || 'सभी'}`);
 });
 
+// -- Keep-Alive/Timeout Settings --
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 120 * 1000;
