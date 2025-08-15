@@ -1,12 +1,13 @@
-import path from 'path'; // यहाँ जोड़ा गया
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { fileURLToPath } from 'url';
 import * as pdfjs from 'pdfjs-dist';
+// अगर Node 18 से कम है तो node-fetch या undici का उपयोग करें
+import fetch from 'node-fetch'; // <-- नये fetch के लिए
 
-// कॉन्फ़िगरेशन
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,7 +15,6 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
-// CORS सेटअप
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(',')
   .map(s => s.trim())
@@ -29,30 +29,26 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
-      callback(new Error('CORS नियमों द्वारा अनुमति नहीं है'));
+      callback(new Error('Not allowed by CORS policy')); // अंग्रेज़ी और स्टैण्डर्ड
     }
   }
 }));
 
-// फाइल अपलोड सेटअप (मेमोरी में)
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB सीमा
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
-// PDF पार्सिंग फंक्शन
 const extractPDFText = async (buffer) => {
   try {
     const pdfDoc = await pdfjs.getDocument({ data: buffer }).promise;
     let text = '';
-    
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
       text += textContent.items.map(item => item.str).join(' ') + '\n';
     }
-    
     return text;
   } catch (error) {
     console.error('PDF पढ़ने में त्रुटि:', error);
@@ -60,15 +56,13 @@ const extractPDFText = async (buffer) => {
   }
 };
 
-// फाइल कंटेंट पढ़ने का फंक्शन
 const readFileContent = async (file) => {
   if (!file || !file.buffer) return '';
-
   try {
     if (file.mimetype === 'application/pdf') {
       return await extractPDFText(file.buffer);
     } else if (
-      file.mimetype.startsWith('text/') || 
+      file.mimetype.startsWith('text/') ||
       file.mimetype === 'application/json' ||
       file.mimetype === 'application/javascript'
     ) {
@@ -82,7 +76,6 @@ const readFileContent = async (file) => {
   }
 };
 
-// हेल्थ चेक एंडपॉइंट
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'स्वस्थ',
@@ -92,7 +85,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// मुख्य चैट एंडपॉइंट (स्ट्रीमिंग के साथ)
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   const { prompt } = req.body;
   const file = req.file;
@@ -102,18 +94,15 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
   }
 
   try {
-    // फाइल कंटेंट पढ़ें (अगर अपलोड की गई है)
     let fileContent = '';
     if (file) {
       fileContent = await readFileContent(file);
     }
 
-    // फाइल कंटेंट को प्रॉम्प्ट में जोड़ें
-    const finalPrompt = fileContent 
+    const finalPrompt = fileContent
       ? `फाइल कंटेंट:\n${fileContent}\n\nसवाल: ${prompt}`
       : prompt;
 
-    // OpenRouter API को कॉल करें
     const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -127,27 +116,43 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
       })
     });
 
-    // स्ट्रीमिंग रिस्पॉन्स के लिए हेडर सेट करें
+    if (!aiResponse.ok || !aiResponse.body) {
+      res.status(502).json({ error: 'AI API response failed' });
+      return;
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    
-    // स्ट्रीम को सीधे क्लाइंट को भेजें
+
     aiResponse.body.pipe(res);
+    aiResponse.body.on('end', () => {
+      res.end();
+    });
+    aiResponse.body.on('error', (err) => {
+      console.error('AI stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'AI stream error' });
+      } else {
+        res.end();
+      }
+    });
 
   } catch (error) {
     console.error('त्रुटि:', error);
-    res.status(500).json({ error: 'आंतरिक सर्वर त्रुटि' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'आंतरिक सर्वर त्रुटि' });
+    } else {
+      res.end();
+    }
   }
 });
 
-// सर्वर शुरू करें
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`सर्वर पोर्ट ${PORT} पर चल रहा है (0.0.0.0)`);
   console.log(`अनुमत मूल स्रोत: ${allowedOrigins.join(', ') || 'सभी'}`);
 });
 
-// टाइमआउट बढ़ाएँ (Render की सिफारिश)
-server.keepAliveTimeout = 120 * 1000; // 120 सेकंड
-server.headersTimeout = 120 * 1000; // 120 सेकंड
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 120 * 1000;
