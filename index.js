@@ -5,8 +5,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import { fileURLToPath } from 'url';
 import * as pdfjs from 'pdfjs-dist';
-// अगर Node 18 से कम है तो node-fetch या undici का उपयोग करें
-import fetch from 'node-fetch'; // <-- नये fetch के लिए
+import fetch from 'node-fetch';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -29,7 +28,7 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS policy')); // अंग्रेज़ी और स्टैण्डर्ड
+      callback(new Error('Not allowed by CORS policy'));
     }
   }
 }));
