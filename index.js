@@ -1,3 +1,4 @@
+import path from 'path'; // यहाँ जोड़ा गया
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -19,24 +20,18 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
+if (allowedOrigins.length === 0) {
+  console.warn("WARNING: ALLOWED_ORIGINS is not set. Allowing all origins for development.");
+}
+
 app.use(cors({
   origin: function (origin, callback) {
-    // सभी उपडोमेन को अनुमति देने के लिए
-    const allowedPattern = /https?:\/\/(.*\.)?github\.io/;
-    
-    if (!origin || 
-        allowedOrigins.includes(origin) || 
-        allowedPattern.test(origin) || 
-        allowedOrigins.length === 0) {
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
-      console.error(`CORS त्रुटि: अनुमति नहीं है ${origin}`);
       callback(new Error('CORS नियमों द्वारा अनुमति नहीं है'));
     }
-  },
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  }
 }));
 
 // फाइल अपलोड सेटअप (मेमोरी में)
@@ -46,7 +41,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB सीमा
 });
 
-// PDF पार्सिंग फंक्शन अपडेट करें
+// PDF पार्सिंग फंक्शन
 const extractPDFText = async (buffer) => {
   try {
     const pdfDoc = await pdfjs.getDocument({ data: buffer }).promise;
@@ -93,7 +88,7 @@ app.get('/api/health', (req, res) => {
     status: 'स्वस्थ',
     message: 'बैकएंड कार्यरत है!',
     timestamp: new Date().toISOString(),
-    version: '1.0.0'
+    version: '1.0.1'
   });
 });
 
@@ -145,7 +140,9 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: 'आंतरिक सर्वर त्रुटि' });
   }
 });
-// सर्वर शुरू करने से पहले ये लाइनें जोड़ें
+
+// सर्वर शुरू करें
+const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`सर्वर पोर्ट ${PORT} पर चल रहा है (0.0.0.0)`);
   console.log(`अनुमत मूल स्रोत: ${allowedOrigins.join(', ') || 'सभी'}`);
@@ -154,10 +151,3 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 // टाइमआउट बढ़ाएँ (Render की सिफारिश)
 server.keepAliveTimeout = 120 * 1000; // 120 सेकंड
 server.headersTimeout = 120 * 1000; // 120 सेकंड
-
-// सर्वर शुरू करें
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => { // <-- यहाँ बदलाव किया है
-  console.log(`सर्वर पोर्ट ${PORT} पर चल रहा है (0.0.0.0)`);
-  console.log(`अनुमत मूल स्रोत: ${allowedOrigins.join(', ') || 'सभी'}`);
-});
