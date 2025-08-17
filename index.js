@@ -6,7 +6,7 @@ import fetch from 'node-fetch';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { Readable } from 'stream';
-import Together from 'together';
+import { Together } from '@together-ai/sdk';
 
 dotenv.config();
 
