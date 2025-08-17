@@ -6,13 +6,11 @@ import fetch from 'node-fetch';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { Readable } from 'stream';
-import { Together } from '@together-ai/sdk';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const together = new Together({ apiKey: process.env.TOGETHER_API_KEY });
 
 // Middleware
 app.use(cors());
@@ -318,25 +316,6 @@ async function callGoogleGemini(prompt) {
     };
 }
 
-// DeepSeek R1 via Together AI
-async function callTogetherAI(prompt) {
-    const completion = await together.chat.completions.create({
-        model: 'deepseek-ai/DeepSeek-R1',
-        messages: [{ role: 'user', content: prompt }],
-        stream: true
-    });
-
-    let fullResponse = '';
-    for await (const chunk of completion) {
-        fullResponse += chunk.choices[0]?.delta?.content || '';
-    }
-    
-    return { 
-        response: fullResponse,
-        model: "deepseek-ai/DeepSeek-R1"
-    };
-}
-
 // DeepSeek R1 via OpenRouter
 async function callDeepSeekR1(prompt) {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -383,6 +362,65 @@ async function callDeepSeekR1(prompt) {
         response: fullResponse,
         model: "deepseek/deepseek-r1"
     };
+}
+
+// Together AI API (using direct REST calls)
+async function callTogetherAI(prompt) {
+    try {
+        const response = await fetch("https://api.together.xyz/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.TOGETHER_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "deepseek-ai/DeepSeek-R1",
+                messages: [{ role: "user", content: prompt }],
+                stream: true
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error?.message || `Together AI error: ${response.statusText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of lines) {
+                const message = line.replace(/^data: /, '');
+                if (message === '[DONE]') break;
+                
+                try {
+                    const parsed = JSON.parse(message);
+                    const content = parsed.choices[0]?.delta?.content || '';
+                    fullResponse += content;
+                } catch (e) {
+                    console.error('Together AI stream parsing error:', e);
+                }
+            }
+        }
+        
+        return { 
+            response: fullResponse,
+            model: "deepseek-ai/DeepSeek-R1"
+        };
+    } catch (error) {
+        console.error('Together AI API error:', error);
+        return {
+            response: `[Error] Failed to get response from Together AI: ${error.message}`,
+            model: "deepseek-ai/DeepSeek-R1"
+        };
+    }
 }
 
 // Auto-streaming endpoint
@@ -479,22 +517,63 @@ async function streamOpenAIResponse(prompt, model, res) {
 }
 
 async function streamTogetherAIResponse(prompt, res) {
-    const completion = await together.chat.completions.create({
-        model: 'deepseek-ai/DeepSeek-R1',
-        messages: [{ role: 'user', content: prompt }],
-        stream: true
-    });
+    try {
+        const response = await fetch("https://api.together.xyz/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.TOGETHER_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "deepseek-ai/DeepSeek-R1",
+                messages: [{ role: "user", content: prompt }],
+                stream: true
+            })
+        });
 
-    for await (const chunk of completion) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-            res.flush();
+        if (!response.ok) {
+            throw new Error(`Together AI error: ${response.statusText}`);
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                res.write('data: [DONE]\n\n');
+                res.end();
+                break;
+            }
+            
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of lines) {
+                const message = line.replace(/^data: /, '');
+                if (message === '[DONE]') {
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                    return;
+                }
+                
+                try {
+                    const parsed = JSON.parse(message);
+                    const content = parsed.choices[0]?.delta?.content || '';
+                    if (content) {
+                        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                        res.flush();
+                    }
+                } catch (e) {
+                    console.error('Together AI stream parsing error:', e);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Together AI streaming error:', error);
+        res.write(`data: [ERROR] ${error.message}\n\n`);
+        res.end();
     }
-    
-    res.write('data: [DONE]\n\n');
-    res.end();
 }
 
 async function streamOpenRouterResponse(prompt, model, res) {
